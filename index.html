@@ -1,0 +1,187 @@
+<!-- LightingExercise.html
+
+	Written Fall 2021 by John Bell for CS 425
+    Last modified Spring 2023
+    
+    See the web page for a full explanation of what the program does.
+    
+    TODO:
+    	1. Find the ambient light terms.  Uncomment as needed and raise
+           the ambient light level until the color of the lozenge is seen.
+           Play around with different ambient light levels to see the effect.
+        2. Find and uncomment the terms needed for the diffuse lighting contribution.
+           Reduce ambient to a low level, e.g. ( 0.2, 0.2, 0.2 ), and adjust 
+           the diffuse light level to see the effect of different light levels.
+        3. Find and uncomment the terms needed for specular light, and increase 
+           the specular light level to see the effect.  Adjust the three light
+           levels to yield a realistic pleasing effect.
+        4. As time allows, you could consider:
+           a.) Adding lighting calculations to the fragment shader ( phong shading ).
+           b.) Adding additional lights.
+           c.) Passing in lighting and material parameters, instead of hard coding them.
+           d.) Adding in the attenuation term in the denominator.
+ -->
+
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<title>Lighting Exercise</title>
+
+<!-- First to load up the external javascript files.  lightingExercise is the driver; sphere and axes are objects. -->
+
+<script type="text/javascript" src="./Common/webgl-utils.js"></script>
+<script type="text/javascript" src="./Common/initShaders.js"></script>
+<script type="text/javascript" src="./Common/MV.js"></script>
+
+<script type="text/javascript" src="lightingExercise.js"></script>	<!--   Main lighting driver -->
+<script type="text/javascript" src="sphere.js"></script>			<!--   Sphere class -->
+<script type="text/javascript" src="axes.js"></script>				<!--   Axes class -->
+<script type="text/javascript" src="cone.js"></script>
+
+<!-- First the vertex shader ------------------------------------------------------------------>
+
+<script id="vertex-shader" type="x-shader/x-vertex" >
+
+	// Attributes are values that vary from vertex to vertex 
+	attribute vec3 vPosition;	// Vertex position data in 3D space
+	attribute vec3 vColor;		// Vertex color data - Not needed for all applications
+	attribute vec3 vNormal;   // Normally this would be needed, but not for this special case.
+	//attributes material properties;  We'll just use vColor and white for this initial test program
+	//                                 Shininess is hard-coded below, with other material properties
+	
+	// Uniform variables are shared for all vertices 
+	uniform mat4 uModelXform;		// Model transformation matrix
+	uniform mat4 uViewXform;		// Camera transformation Matrix
+	uniform mat4 uProjection;		// Camera Projection Matrix
+	// "modelView" is the product of uModelXform * uViewXform
+	uniform mat3 uNormalXform;	 	// Transformation matrix to apply to vertex normals.
+	uniform vec4 uLightPosition; 	// Position of light source.  Given in world coordinates.
+	uniform int  uGouraud;			// Flag to turn vertex shading off for certain bright objects ( e.g. axes. )
+
+	// Variables needed for lighting.  Normally these would be passed in
+	// as uniforms, but to get started they are hard coded in here.
+	// Note these are all provided at zero light level, to be adjusted.
+	vec3 ambientLight  = vec3( 0.2, 0.2, 0.2 );	// 0.2, 0.2, 0.2
+	vec3 diffuseLight  = vec3( 0.5, 0.5, 0.5 );	// 0.5, 0.5, 0.5
+	vec3 specularLight = vec3( 0.8, 0.8, 1.0 );	// 1.0, 1.0, 1.0
+	
+	// Varying values are passed from vertex shader to fragment shader, as interpolated values 
+	varying vec4 fColor;			// Interpolated color 
+	
+	void main( ) {
+		precision mediump float;
+		
+		// First set the position of the vertex, projected to screen coordinates
+		gl_Position = uProjection * uViewXform * uModelXform * vec4( vPosition, 1.0 );
+		
+		// If not doing gouraud shading, then just pass through the color and return;
+		if( uGouraud == 0 ) {
+			fColor = vec4( vColor, 1.0 );
+			return;
+		}
+
+		// Materials properties would normally be attributes.  
+		// Use vColor and hard-coded constants for a first pass.
+		// Initially set ambient and diffuse reflectivity coefficients equal to vColor
+		vec3 ambientMaterial = vec3( vColor );
+		vec3 diffuseMaterial = vec3( vColor );
+		vec3 specularMaterial = vec3( 1.0, 1.0, 1.0 ); // white
+		float shininess = 100.0;
+		
+		// Calculate the terms that don't depend on vectors
+		// Vector * vector does component-wise multiplication in shading language
+		
+		vec3 ambientProduct = ambientMaterial * ambientLight;
+		vec3 diffuseProduct = diffuseMaterial * diffuseLight;
+		vec3 specularProduct = specularMaterial * specularLight;
+		
+		// Now to determine the necessary vectors, in eye coordinates.
+		
+		// The vertex position is mapped to eye coordinates, but not to screen coordinates
+		vec3 position = ( uViewXform * uModelXform * vec4( vPosition, 1.0 ) ).xyz;
+		
+		// The eye is the origin of eye coordinates.  Eye vector points from position to the eye ( origin )
+		vec3 view = normalize( -position ); // = normalize ( origin - position )
+		
+		// The light vector points from the vertex position to the light source, all in eye coordinates.
+		// Lightposition is already given in world coordinates, so it only needs to be converted
+		//		from world to eye coordinates.
+		vec3 light = normalize( ( uViewXform * uLightPosition ).xyz - position );
+		
+		// The normal vector needs a special transformation.  More specifically,
+		// the normalMatrix is the inverse of the transpose of the upper left 3x3 submatrix
+		// of modelView * transformation.  See pages 309-310 of Angel.  Passed in as a uniform.
+		vec3 vNormal = vPosition;		// FOR SPHERES ONLY, normals and positions are identical
+		vec3 normal = normalize( uNormalXform * vNormal );   
+		
+		// And finally the halfway vector is the "average" of the eye and light vectors
+		vec3 halfway = normalize( view + light );
+		
+		// Next calculate the two dot products
+		float lightDotNormal = dot( light, normal ); 	 // Used for diffuse lighting
+		float normalDotHalf  = dot( normal, halfway ); // Used for specular lighting
+		
+		// And now to add the lighting terms
+		
+		fColor = vec4(   ambientProduct
+					   + diffuseProduct  * max( lightDotNormal, 0.0 )
+					   + specularProduct * pow( max( normalDotHalf, 0.0 ), shininess )
+					   , 1.0 );
+		return;		
+		
+	} // end of main( ) of vertex shader
+
+</script>	<!--	End of vertex shader -->
+
+<!--  Next the fragment shader --------------------------------------------------------------------->
+
+<script id="fragment-shader" type="x-shader/x-fragment">
+	precision mediump float;
+	
+	// Varying variables are interpolated between vertices of a triangle
+	varying vec4 fColor;			// Fragment color - Not needed in all applications
+	
+	// Uniform variables are shared for all fragments 
+	// None needed for a simple shader.
+	uniform int uPhong;
+
+	void main( ) {
+		
+		// TODO:  Implement a phong shader here similar to the gouraud shader implemented above.
+		//		  Turn it on and off with a uniform int uPhong = zero or non-zero.
+		
+		// A simple pass-through shader for now.
+		
+		gl_FragColor = fColor;
+		
+			
+		return;
+	
+	} // End of main( ) for fragment shader
+	
+</script>	<!-- End of fragment shader -->
+
+</head>
+
+<!-- End of all the scripts.  Now here is the actual web page -->
+
+<body>
+<h3 align="center">Lighting Exercise<br />
+Becca Nika - 
+Spring 2023 - 
+CS 425</h3>
+<p>The following scene contains a moving ( stretched ) sphere, a set of axes at the origin, and   a moving light source marked by a small white sphere. See below for implementation details.</p>
+
+<canvas id="gl-canvas" width="600" height="400">
+  Ooops No Canvas Found
+</canvas>
+<p>
+The sphere rotates slowly about the Y-axis in the X-Z plane, and the light rotates in the opposite direction at a different speed, ( so they don't always pass each other at the same points. ) The light has a higher Y value and a larger radius of rotation than the sphere..  </p>
+<p>Initially all light levels are set to zero, so there is no actual lighting. These light levels are to be adjusted so that there is a small amount of ambient light present, as well as diffuse and specular light emanating from the rotating light. These lighting values are hard coded as constants for development purposes. Light falloff with distance is not considered, and there is only one ambient light source ( and only one point light. )</p>
+<p>For the purposes of simplicity, the ambient and diffuse material properties of the sphere are taken to match those of &quot;vColor&quot;, the vertex color values, and the specular material reflection property is hard-coded as white. The shininess value in use is also hard coded for now.</p>
+<p>Normally each vertex would now need to have normal information provided ( and material properites and shininess ), in addition to position and color. This initial exercise makes use of the knowledge that for a sphere centered at the origin, the normals at each vertex are the same as the ( normalized ) vertex positions. ( For a sphere with radius = 1.0 the normalization is not even needed. ) So the untransformed vertex positions are used for the vertex normals. Transformations such as rotation and non-uniform scaling modify the normals differently from the vertex positions, but that is handled within the code.</p>
+<p>A flag is used to turn shading on and off, so that the axes and the white light marker are fully lit, without consideration for shading.</p>
+</body>
+</html>
